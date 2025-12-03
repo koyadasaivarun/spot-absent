@@ -17,7 +17,7 @@ import xgboost as xgb
 # Config / Paths
 # -------------------
 MYSQL_USER = "sql12810449"
-MYSQL_PASS = "system"
+MYSQL_PASS = ""
 MYSQL_DB   = "sql12810449"
 MYSQL_HOST = "http://sql12.freesqldatabase.com/"
 MYSQL_PORT = 3306
@@ -291,5 +291,6 @@ with tab3:
                     st.download_button("Download Results CSV", csv, file_name=f"{selected_depot}_analysis.csv", mime="text/csv")
         except Exception as e:
             st.error(f"Analysis failed: {e}")
+
 
 
