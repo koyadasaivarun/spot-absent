@@ -1,15 +1,13 @@
 # app.py
 import os
 import json
-import subprocess
-import pandas as pd
 import sys
 import subprocess
 
 import joblib
 import streamlit as st
 from datetime import date, timedelta
-from sqlalchemy import create_engine
+import pandas as pd
 import numpy as np
 from sklearn.metrics import r2_score
 import matplotlib.pyplot as plt
@@ -19,29 +17,41 @@ import xgboost as xgb
 # -------------------
 # Config / Paths
 # -------------------
-MYSQL_USER = "root"
-MYSQL_PASS = "system"
-MYSQL_DB   = "tgsrtc_new"
-MYSQL_HOST = "localhost"
-TRAIN_SCRIPT_PATH = "/mount/src/spot-absent/tr5.py" 
-  # update if needed
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-engine = create_engine(f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASS}@{MYSQL_HOST}/{MYSQL_DB}")
+# CSV used instead of MySQL
+DATA_CSV_PATH = os.path.join(BASE_DIR, "input_datasql.csv")
 
-SAVE_DIR = "xgb_models"
+# Training script path (relative -> works locally & on Streamlit Cloud)
+TRAIN_SCRIPT_PATH = os.path.join(BASE_DIR, "tr5.py")
+
+SAVE_DIR = os.path.join(BASE_DIR, "xgb_models")
 os.makedirs(SAVE_DIR, exist_ok=True)
-METRICS_FILE = os.path.join(SAVE_DIR, "xgb_gan_metrics.json")  # matches tr5.py
+METRICS_FILE = os.path.join(SAVE_DIR, "xgb_gan_metrics.json")
 
 # -------------------
 # Utility helpers
 # -------------------
 @st.cache_data
+def load_input_data():
+    """Load full input dataset from CSV (input_datasql.csv)."""
+    if not os.path.exists(DATA_CSV_PATH):
+        raise FileNotFoundError(f"CSV file not found: {DATA_CSV_PATH}")
+    df = pd.read_csv(DATA_CSV_PATH)
+    # Ensure data_date is datetime if present
+    if "data_date" in df.columns:
+        df["data_date"] = pd.to_datetime(df["data_date"])
+    return df
+
+
+@st.cache_data
 def load_metrics():
-    """Load metrics JSON if available"""
+    """Load metrics JSON if available."""
     if os.path.exists(METRICS_FILE):
         with open(METRICS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return None
+
 
 def load_models_for_depot(depot):
     """
@@ -78,6 +88,7 @@ def load_models_for_depot(depot):
 
     return loaded, features
 
+
 def predict_with_model(model, X_df):
     """
     Predict handling both XGBRegressor and xgboost.Booster (raw).
@@ -100,6 +111,7 @@ def predict_with_model(model, X_df):
     # Unknown type
     raise TypeError(f"Unsupported model type: {type(model)}")
 
+
 def align_row_to_features(row_dict, features):
     """
     Turn a single-row dict into DataFrame aligned to features.
@@ -108,6 +120,7 @@ def align_row_to_features(row_dict, features):
     df_row = pd.DataFrame([row_dict])
     df_row = df_row.reindex(columns=features, fill_value=0)
     return df_row
+
 
 # -------------------
 # Streamlit UI
@@ -120,13 +133,14 @@ tab1, tab2, tab3 = st.tabs(["📊 Train Models", "🔮 Predict Absenteeism", "�
 # ------------------- Tab 1: Train / Retrain -------------------
 with tab1:
     st.subheader("Depot-wise Training (runs your tr5.py)")
-    st.write("This will execute the training script (tr5.py). Make sure the path is correct and Python environment has required packages.")
+    st.write("This will execute the training script (tr5.py). It now uses input_datasql.csv instead of MySQL.")
+
     if st.button("Train / Retrain All Depots"):
         with st.spinner("Training depot-specific models — this may take several minutes..."):
             try:
                 # Use the SAME Python interpreter Streamlit is running on
                 result = subprocess.run(
-                    [sys.executable, TRAIN_SCRIPT_PATH],  # e.g. TRAIN_SCRIPT_PATH = "tr5.py"
+                    [sys.executable, TRAIN_SCRIPT_PATH],
                     capture_output=True,
                     text=True,
                     check=False,  # we handle returncode manually below
@@ -140,7 +154,6 @@ with tab1:
             except Exception as e:
                 st.error("Failed to run training script:")
                 st.code(str(e))
-
 
     metrics = load_metrics()
     if metrics:
@@ -162,33 +175,35 @@ with tab1:
     else:
         st.info("No metrics found. Run training first (use the button above).")
 
+
 # ------------------- Tab 2: Predict -------------------
 with tab2:
     st.subheader("Predict Absenteeism for a Depot")
-    # load list of depots
+
     try:
-        depots_df = pd.read_sql("SELECT DISTINCT depot_name FROM input_data", engine)
-        depot_list = depots_df["depot_name"].tolist()
+        df_all = load_input_data()
+        if "depot_name" not in df_all.columns:
+            raise KeyError("Column 'depot_name' not found in input_datasql.csv")
+
+        depot_list = sorted(df_all["depot_name"].dropna().unique().tolist())
     except Exception as e:
         depot_list = []
-        st.error(f"Failed to fetch depots from DB: {e}")
+        st.error(f"Failed to load depots from CSV: {e}")
 
     if not depot_list:
-        st.info("No depots found in DB. Make sure input_data table exists.")
+        st.info("No depots found in CSV. Make sure 'depot_name' column exists in input_datasql.csv.")
     else:
         selected_depot = st.selectbox("Select Depot", depot_list)
         selected_date = st.date_input("Select Date", date.today() + timedelta(days=1))
 
         if st.button("Predict Tomorrow's Absenteeism"):
             try:
-                # fetch most recent record for this depot
-                df_depot = pd.read_sql(
-                    "SELECT * FROM input_data WHERE depot_name=%(depot)s ORDER BY data_date DESC LIMIT 1",
-                    engine,
-                    params={"depot": selected_depot}
-                )
+                df_depot = df_all[df_all["depot_name"] == selected_depot].copy()
+                if "data_date" in df_depot.columns:
+                    df_depot = df_depot.sort_values("data_date", ascending=False)
+
                 if df_depot.empty:
-                    st.warning("No historical record found for selected depot.")
+                    st.warning("No historical record found for selected depot in CSV.")
                 else:
                     last_row = df_depot.iloc[0].to_dict()
                     last_row["data_date"] = pd.to_datetime(selected_date)
@@ -198,109 +213,136 @@ with tab2:
                         st.error("No trained model found for this depot. Please train first.")
                     else:
                         # if features list missing, try to infer from model saved dict
-                        if features is None and isinstance(joblib.load(os.path.join(SAVE_DIR, f"{selected_depot}_xgb.pkl")), dict):
-                            loaded = joblib.load(os.path.join(SAVE_DIR, f"{selected_depot}_xgb.pkl"))
-                            features = loaded.get("features", None)
+                        model_path = os.path.join(SAVE_DIR, f"{selected_depot}_xgb.pkl")
+                        if features is None and os.path.exists(model_path):
+                            loaded = joblib.load(model_path)
+                            if isinstance(loaded, dict):
+                                features = loaded.get("features", None)
 
                         if features is None:
                             st.error("Feature list for this depot not found. Can't make prediction.")
                         else:
                             X_row = align_row_to_features(last_row, features)
                             y_pred = predict_with_model(model, X_row)
-                            st.success(f"Predicted Spot Absent for {selected_depot} on {selected_date}: **{float(y_pred[0]):.2f}**")
+                            st.success(
+                                f"Predicted Spot Absent for {selected_depot} on {selected_date}: "
+                                f"**{float(y_pred[0]):.2f}**"
+                            )
             except Exception as e:
                 st.error(f"Prediction failed: {e}")
+
 
 # ------------------- Tab 3: Analysis -------------------
 with tab3:
     st.subheader("Actual vs Predicted Analysis")
 
-    # get depot list again
     try:
-        depots_df = pd.read_sql("SELECT DISTINCT depot_name FROM input_data", engine)
-        depot_list = depots_df["depot_name"].tolist()
+        df_all = load_input_data()
+        if "depot_name" not in df_all.columns:
+            raise KeyError("Column 'depot_name' not found in input_datasql.csv")
+
+        depot_list = sorted(df_all["depot_name"].dropna().unique().tolist())
     except Exception as e:
         depot_list = []
-        st.error(f"Failed to fetch depots from DB: {e}")
+        st.error(f"Failed to load depots from CSV: {e}")
 
-    selected_depot = st.selectbox("Select Depot for Analysis", depot_list, key="analysis_depot")
+    if not depot_list:
+        st.info("No depots found in CSV.")
+    else:
+        selected_depot = st.selectbox("Select Depot for Analysis", depot_list, key="analysis_depot")
 
-    # date range selection (fetch min/max from DB)
-    try:
-        minmax = pd.read_sql(
-            "SELECT MIN(data_date) as min_date, MAX(data_date) as max_date FROM input_data WHERE depot_name=%(depot)s",
-            engine,
-            params={"depot": selected_depot}
-        ).iloc[0]
-        min_date = pd.to_datetime(minmax["min_date"]).date() if pd.notna(minmax["min_date"]) else date.today() - timedelta(days=90)
-        max_date = pd.to_datetime(minmax["max_date"]).date() if pd.notna(minmax["max_date"]) else date.today()
-    except Exception:
-        min_date = date.today() - timedelta(days=90)
-        max_date = date.today()
+        # Filter for selected depot
+        df_depot = df_all[df_all["depot_name"] == selected_depot].copy()
 
-    start_date = st.date_input("Start Date", min_date, key="analysis_start")
-    end_date = st.date_input("End Date", max_date, key="analysis_end")
+        # date range selection (fetch min/max from CSV)
+        if "data_date" in df_depot.columns and not df_depot.empty:
+            min_date = df_depot["data_date"].min().date()
+            max_date = df_depot["data_date"].max().date()
+        else:
+            min_date = date.today() - timedelta(days=90)
+            max_date = date.today()
 
-    if st.button("Run Analysis"):
-        try:
-            df = pd.read_sql(
-                "SELECT * FROM input_data WHERE depot_name=%(depot)s AND data_date BETWEEN %(start)s AND %(end)s ORDER BY data_date",
-                engine,
-                params={"depot": selected_depot, "start": start_date, "end": end_date}
-            )
-            if df.empty:
-                st.warning("No rows in selected range.")
-            else:
-                model, features = load_models_for_depot(selected_depot)
-                if model is None:
-                    st.error("Model for this depot not found. Train first.")
-                elif features is None:
-                    st.error("Feature list for this depot not found. Can't run analysis.")
+        start_date = st.date_input("Start Date", min_date, key="analysis_start")
+        end_date = st.date_input("End Date", max_date, key="analysis_end")
+
+        if st.button("Run Analysis"):
+            try:
+                # Filter by date range (if data_date column exists)
+                df = df_depot.copy()
+                if "data_date" in df.columns:
+                    df = df[(df["data_date"].dt.date >= start_date) & (df["data_date"].dt.date <= end_date)]
+                    df = df.sort_values("data_date")
+
+                if df.empty:
+                    st.warning("No rows in selected range for this depot.")
                 else:
-                    df_features = df.reindex(columns=features, fill_value=0)
-                    preds = predict_with_model(model, df_features)
-                    df = df.copy()
-                    df["Predicted"] = preds
-                    df["Error"] = df["Spot_Absent"] - df["Predicted"]
-                    df["Abs_Error"] = df["Error"].abs()
-                    df["Pct_Error"] = (df["Abs_Error"] / df["Spot_Absent"].replace(0, 1)) * 100
+                    model, features = load_models_for_depot(selected_depot)
+                    if model is None:
+                        st.error("Model for this depot not found. Train first.")
+                    elif features is None:
+                        st.error("Feature list for this depot not found. Can't run analysis.")
+                    else:
+                        df_features = df.reindex(columns=features, fill_value=0)
+                        preds = predict_with_model(model, df_features)
+                        df = df.copy()
+                        df["Predicted"] = preds
 
-                    rmse = np.sqrt((df["Error"]**2).mean())
-                    mae = df["Abs_Error"].mean()
-                    mape = df["Pct_Error"].mean()
-                    r2 = r2_score(df["Spot_Absent"], df["Predicted"])
+                        if "Spot_Absent" not in df.columns:
+                            st.error("Column 'Spot_Absent' not found in CSV; cannot compute errors.")
+                        else:
+                            df["Error"] = df["Spot_Absent"] - df["Predicted"]
+                            df["Abs_Error"] = df["Error"].abs()
+                            df["Pct_Error"] = (
+                                df["Abs_Error"] / df["Spot_Absent"].replace(0, 1)
+                            ) * 100
 
-                    st.markdown(f"**RMSE:** {rmse:.2f}  |  **MAE:** {mae:.2f}  |  **MAPE:** {mape:.2f}%  |  **R²:** {r2:.2f}")
+                            rmse = np.sqrt((df["Error"] ** 2).mean())
+                            mae = df["Abs_Error"].mean()
+                            mape = df["Pct_Error"].mean()
+                            r2 = r2_score(df["Spot_Absent"], df["Predicted"])
 
-                    st.dataframe(df[["data_date", "Spot_Absent", "Predicted", "Error", "Pct_Error"]])
+                            st.markdown(
+                                f"**RMSE:** {rmse:.2f}  |  "
+                                f"**MAE:** {mae:.2f}  |  "
+                                f"**MAPE:** {mape:.2f}%  |  "
+                                f"**R²:** {r2:.2f}"
+                            )
 
-                    # Scatter
-                    fig1, ax1 = plt.subplots()
-                    sns.scatterplot(x="Spot_Absent", y="Predicted", data=df, ax=ax1)
-                    ax1.plot([df["Spot_Absent"].min(), df["Spot_Absent"].max()],
-                             [df["Spot_Absent"].min(), df["Spot_Absent"].max()], "r--")
-                    ax1.set_xlabel("Actual")
-                    ax1.set_ylabel("Predicted")
-                    st.pyplot(fig1)
+                            st.dataframe(df[["data_date", "Spot_Absent", "Predicted", "Error", "Pct_Error"]])
 
-                    # Error hist
-                    fig2, ax2 = plt.subplots()
-                    sns.histplot(df["Error"], bins=20, kde=True, ax=ax2)
-                    st.pyplot(fig2)
+                            # Scatter
+                            fig1, ax1 = plt.subplots()
+                            sns.scatterplot(x="Spot_Absent", y="Predicted", data=df, ax=ax1)
+                            ax1.plot(
+                                [df["Spot_Absent"].min(), df["Spot_Absent"].max()],
+                                [df["Spot_Absent"].min(), df["Spot_Absent"].max()],
+                                "r--",
+                            )
+                            ax1.set_xlabel("Actual")
+                            ax1.set_ylabel("Predicted")
+                            st.pyplot(fig1)
 
-                    # Time-series
-                    fig3, ax3 = plt.subplots(figsize=(10,4))
-                    ax3.plot(df["data_date"], df["Spot_Absent"], label="Actual", marker="o")
-                    ax3.plot(df["data_date"], df["Predicted"], label="Predicted", marker="x")
-                    ax3.legend()
-                    ax3.set_xlabel("Date")
-                    ax3.set_ylabel("Spot Absent")
-                    st.pyplot(fig3)
+                            # Error hist
+                            fig2, ax2 = plt.subplots()
+                            sns.histplot(df["Error"], bins=20, kde=True, ax=ax2)
+                            st.pyplot(fig2)
 
-                    # allow download
-                    csv = df[["data_date","Spot_Absent","Predicted","Error","Pct_Error"]].to_csv(index=False)
-                    st.download_button("Download Results CSV", csv, file_name=f"{selected_depot}_analysis.csv", mime="text/csv")
-        except Exception as e:
-            st.error(f"Analysis failed: {e}")
+                            # Time-series
+                            fig3, ax3 = plt.subplots(figsize=(10, 4))
+                            ax3.plot(df["data_date"], df["Spot_Absent"], label="Actual", marker="o")
+                            ax3.plot(df["data_date"], df["Predicted"], label="Predicted", marker="x")
+                            ax3.legend()
+                            ax3.set_xlabel("Date")
+                            ax3.set_ylabel("Spot Absent")
+                            st.pyplot(fig3)
 
-
+                            # allow download
+                            csv = df[["data_date", "Spot_Absent", "Predicted", "Error", "Pct_Error"]].to_csv(index=False)
+                            st.download_button(
+                                "Download Results CSV",
+                                csv,
+                                file_name=f"{selected_depot}_analysis.csv",
+                                mime="text/csv",
+                            )
+            except Exception as e:
+                st.error(f"Analysis failed: {e}")
