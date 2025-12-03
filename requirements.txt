@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+joblib
+sqlalchemy
+pymysql
+scikit-learn
+matplotlib
+seaborn
+xgboost
+torch
