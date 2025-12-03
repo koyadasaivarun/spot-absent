@@ -1,4 +1,4 @@
-# =========================================
+# ======================================
 # Depot-wise Spot Absenteeism Training (XGB + GAN augmentation)
 # Final full script — stable GAN (BCEWithLogitsLoss), batching, scaling,
 # safe UTF-8 printing, and saves model+feature-list to avoid shape mismatch
@@ -42,7 +42,7 @@ def safe_print(*args, **kwargs):
 # MySQL Connection (edit creds if needed)
 # -------------------
 MYSQL_USER = "sql12810449"
-MYSQL_PASS = "system"
+MYSQL_PASS = ""
 MYSQL_DB   = "sql12810449"
 MYSQL_HOST = "http://sql12.freesqldatabase.com/"
 MYSQL_PORT = 3306
@@ -328,5 +328,6 @@ with open(METRICS_FILE, "w", encoding="utf-8") as f:
     json.dump(all_metrics, f, indent=2, ensure_ascii=False)
 
 safe_print("\nTraining completed. Models and metrics saved in:", SAVE_DIR)
+
 
 
