@@ -12,7 +12,7 @@ import xgboost as xgb
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sqlalchemy import create_engine
+#from sqlalchemy import create_engine
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -38,14 +38,19 @@ def safe_print(*args, **kwargs):
         text = " ".join(map(str, args))
         print(text.encode("ascii", errors="replace").decode(), **kwargs)
 
-# -------------------
-# MySQL Connection (edit creds if needed)
-# -------------------
-MYSQL_USER = "root"
-MYSQL_PASS = "system"
-MYSQL_DB   = "tgsrtc_new"
-MYSQL_HOST = "localhost"
-engine = create_engine(f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASS}@{MYSQL_HOST}/{MYSQL_DB}")
+import os
+import pandas as pd
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CSV_PATH = os.path.join(BASE_DIR, "input_datasql.csv")
+
+if not os.path.exists(CSV_PATH):
+    raise FileNotFoundError(f"CSV file not found: {CSV_PATH}")
+
+print("✅ Loading data from CSV:", CSV_PATH)
+df = pd.read_csv(CSV_PATH)
+print("✅ Data loaded:", df.shape)
+
 
 # -------------------
 # Paths
@@ -327,3 +332,4 @@ with open(METRICS_FILE, "w", encoding="utf-8") as f:
     json.dump(all_metrics, f, indent=2, ensure_ascii=False)
 
 safe_print("\nTraining completed. Models and metrics saved in:", SAVE_DIR)
+
