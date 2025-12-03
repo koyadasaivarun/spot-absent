@@ -16,11 +16,11 @@ import xgboost as xgb
 # -------------------
 # Config / Paths
 # -------------------
-MYSQL_USER = "root"
+MYSQL_USER = "sql12810449"
 MYSQL_PASS = "system"
-MYSQL_DB   = "tgsrtc_new"
-MYSQL_HOST = "localhost"
-TRAIN_SCRIPT_PATH = r"C:\Users\HP\Desktop\vscode\tr5.py"  # update if needed
+MYSQL_DB   = "sql12810449"
+MYSQL_HOST = "http://sql12.freesqldatabase.com/"
+TRAIN_SCRIPT_PATH = "tr5.py"  # update if needed
 
 engine = create_engine(f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASS}@{MYSQL_HOST}/{MYSQL_DB}")
 
@@ -290,3 +290,4 @@ with tab3:
                     st.download_button("Download Results CSV", csv, file_name=f"{selected_depot}_analysis.csv", mime="text/csv")
         except Exception as e:
             st.error(f"Analysis failed: {e}")
+
