@@ -3,6 +3,9 @@ import os
 import json
 import subprocess
 import pandas as pd
+import sys
+import subprocess
+
 import joblib
 import streamlit as st
 from datetime import date, timedelta
@@ -121,7 +124,13 @@ with tab1:
     if st.button("Train / Retrain All Depots"):
         with st.spinner("Training depot-specific models — this may take several minutes..."):
             try:
-                result = subprocess.run(["python", TRAIN_SCRIPT_PATH], capture_output=True, text=True)
+                # Use the SAME Python interpreter Streamlit is running on
+                result = subprocess.run(
+                    [sys.executable, TRAIN_SCRIPT_PATH],  # e.g. TRAIN_SCRIPT_PATH = "tr5.py"
+                    capture_output=True,
+                    text=True,
+                    check=False,  # we handle returncode manually below
+                )
                 if result.returncode == 0:
                     st.success("Training finished successfully.")
                     st.code(result.stdout[:10000])  # show first part
@@ -129,7 +138,9 @@ with tab1:
                     st.error("Training failed. See stderr below.")
                     st.code(result.stderr[:10000])
             except Exception as e:
-                st.error(f"Failed to run training script: {e}")
+                st.error("Failed to run training script:")
+                st.code(str(e))
+
 
     metrics = load_metrics()
     if metrics:
@@ -291,4 +302,5 @@ with tab3:
                     st.download_button("Download Results CSV", csv, file_name=f"{selected_depot}_analysis.csv", mime="text/csv")
         except Exception as e:
             st.error(f"Analysis failed: {e}")
+
 
