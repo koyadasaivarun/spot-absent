@@ -4,22 +4,21 @@
 # safe UTF-8 printing, and saves model+feature-list to avoid shape mismatch
 # =========================================
 import os
-import sys
-import json
-import traceback
-import warnings
-
 import joblib
+import json
 import pandas as pd
 import numpy as np
 import xgboost as xgb
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from sqlalchemy import create_engine
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-
+import sys
+import traceback
+import warnings
 warnings.filterwarnings("ignore")
 
 # Force stdout to UTF-8 when possible (Python 3.7+)
@@ -35,50 +34,42 @@ def safe_print(*args, **kwargs):
     try:
         print(*args, **kwargs)
     except UnicodeEncodeError:
+        # fallback: replace non-ascii chars
         text = " ".join(map(str, args))
         print(text.encode("ascii", errors="replace").decode(), **kwargs)
 
 # -------------------
-# Paths & Data Load (CSV instead of MySQL)
+# MySQL Connection (edit creds if needed)
 # -------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_PATH = os.path.join(BASE_DIR, "input_datasql.csv")
-
-if not os.path.exists(CSV_PATH):
-    raise FileNotFoundError(f"CSV file not found: {CSV_PATH}")
-
-safe_print("✅ Loading data from CSV:", CSV_PATH)
-df = pd.read_csv(CSV_PATH)
-safe_print("✅ Data loaded:", df.shape)
-
-# ensure datetime & sorting if columns exist
-if "data_date" in df.columns:
-    df["data_date"] = pd.to_datetime(df["data_date"])
-if "depot_name" in df.columns and "data_date" in df.columns:
-    df = df.sort_values(["depot_name", "data_date"]).reset_index(drop=True)
+MYSQL_USER = "root"
+MYSQL_PASS = "system"
+MYSQL_DB   = "tgsrtc_new"
+MYSQL_HOST = "localhost"
+engine = create_engine(f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASS}@{MYSQL_HOST}/{MYSQL_DB}")
 
 # -------------------
-# Paths for models/metrics
+# Paths
 # -------------------
-SAVE_DIR = os.path.join(BASE_DIR, "xgb_models")
+SAVE_DIR = "xgb_models"
 os.makedirs(SAVE_DIR, exist_ok=True)
 METRICS_FILE = os.path.join(SAVE_DIR, "xgb_gan_metrics.json")
 
 # -------------------
+# Load Data
+# -------------------
+query = "SELECT * FROM input_data"
+df = pd.read_sql(query, engine)
+df["data_date"] = pd.to_datetime(df["data_date"])
+df = df.sort_values(["depot_name", "data_date"]).reset_index(drop=True)
+
+# -------------------
 # Add lag features
 # -------------------
-def add_lag_features(df_in, target="Spot_Absent"):
-    if "depot_name" not in df_in.columns or "data_date" not in df_in.columns:
-        raise KeyError("Columns 'depot_name' and 'data_date' are required to add lag features.")
-    df_sorted = df_in.sort_values(["depot_name", "data_date"]).copy()
-    df_sorted[f"{target}_Lag1"] = df_sorted.groupby("depot_name")[target].shift(1)
-    df_sorted[f"{target}_MA3"] = (
-        df_sorted.groupby("depot_name")[target]
-        .shift(1)
-        .rolling(3)
-        .mean()
-    )
-    return df_sorted
+def add_lag_features(df, target="Spot_Absent"):
+    df = df.sort_values(["depot_name", "data_date"]).copy()
+    df[f"{target}_Lag1"] = df.groupby("depot_name")[target].shift(1)
+    df[f"{target}_MA3"] = df.groupby("depot_name")[target].shift(1).rolling(3).mean()
+    return df
 
 df = add_lag_features(df, target="Spot_Absent")
 
@@ -93,9 +84,8 @@ class Generator(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(128, feature_dim),
+            nn.Linear(128, feature_dim)
         )
-
     def forward(self, z):
         return self.net(z)
 
@@ -107,9 +97,8 @@ class Discriminator(nn.Module):
             nn.LeakyReLU(0.2),
             nn.Linear(128, 64),
             nn.LeakyReLU(0.2),
-            nn.Linear(64, 1),  # raw logits — use BCEWithLogitsLoss
+            nn.Linear(64, 1)  # raw logits — use BCEWithLogitsLoss
         )
-
     def forward(self, x):
         return self.net(x)
 
@@ -143,12 +132,7 @@ def generate_synthetic_data(X, n_samples=100, epochs=200, batch_size=32, debug=F
     d_opt = optim.Adam(D.parameters(), lr=1e-3)
 
     dataset = torch.utils.data.TensorDataset(X_tensor)
-    loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=min(batch_size, len(X)),
-        shuffle=True,
-        drop_last=False,
-    )
+    loader = torch.utils.data.DataLoader(dataset, batch_size=min(batch_size, len(X)), shuffle=True, drop_last=False)
 
     real_label = 1.0
     fake_label = 0.0
@@ -160,23 +144,13 @@ def generate_synthetic_data(X, n_samples=100, epochs=200, batch_size=32, debug=F
             # Train Discriminator
             d_opt.zero_grad()
             logits_real = D(real_batch)
-            labels_real = torch.full(
-                (logits_real.size(0), 1),
-                real_label,
-                dtype=torch.float32,
-                device=device,
-            )
+            labels_real = torch.full((logits_real.size(0), 1), real_label, dtype=torch.float32, device=device)
             loss_real = criterion(logits_real, labels_real)
 
             z = torch.randn(logits_real.size(0), noise_dim, device=device)
             fake_batch = G(z).detach()
             logits_fake = D(fake_batch)
-            labels_fake = torch.full(
-                (logits_fake.size(0), 1),
-                fake_label,
-                dtype=torch.float32,
-                device=device,
-            )
+            labels_fake = torch.full((logits_fake.size(0), 1), fake_label, dtype=torch.float32, device=device)
             loss_fake = criterion(logits_fake, labels_fake)
 
             d_loss = loss_real + loss_fake
@@ -188,26 +162,18 @@ def generate_synthetic_data(X, n_samples=100, epochs=200, batch_size=32, debug=F
             z = torch.randn(logits_real.size(0), noise_dim, device=device)
             gen_batch = G(z)
             gen_logits = D(gen_batch)
-            labels_gen = torch.full(
-                (gen_logits.size(0), 1),
-                real_label,
-                dtype=torch.float32,
-                device=device,
-            )
+            labels_gen = torch.full((gen_logits.size(0), 1), real_label, dtype=torch.float32, device=device)
             g_loss = criterion(gen_logits, labels_gen)
             g_loss.backward()
             g_opt.step()
 
-        if debug and (epoch % 50 == 0 or epoch == epochs - 1):
+        if debug and (epoch % 50 == 0 or epoch == epochs-1):
             with torch.no_grad():
                 sample_z = torch.randn(min(32, len(X)), noise_dim, device=device)
                 sample_fake = G(sample_z)
                 d_r = D(real_batch).sigmoid()
                 d_f = D(sample_fake).sigmoid()
-                safe_print(
-                    f"GAN epoch {epoch}: D(real) mean={d_r.mean().item():.3f}, "
-                    f"D(fake) mean={d_f.mean().item():.3f}"
-                )
+                safe_print(f"GAN epoch {epoch}: D(real) mean={d_r.mean().item():.3f}, D(fake) mean={d_f.mean().item():.3f}")
 
     # generate synthetic samples
     G.eval()
@@ -232,7 +198,7 @@ def train_xgb_model(X_train, y_train, X_test, y_test):
         colsample_bytree=0.8,
         random_state=42,
         tree_method="hist",
-        eval_metric="rmse",
+        eval_metric="rmse"
     )
     try:
         model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
@@ -243,8 +209,8 @@ def train_xgb_model(X_train, y_train, X_test, y_test):
 # -------------------
 # Train per-depot: GAN augmentation + XGB training
 # -------------------
-def train_depot_models(df_in, depot, target="Spot_Absent", augment_to=60, debug_gan=False):
-    df_depot = df_in[df_in["depot_name"] == depot].dropna(subset=[target]).copy()
+def train_depot_models(df, depot, target="Spot_Absent", augment_to=60, debug_gan=False):
+    df_depot = df[df["depot_name"] == depot].dropna(subset=[target]).copy()
     n_rows = df_depot.shape[0]
     if n_rows < 8:
         safe_print(f"Skipping {depot} (too few rows: {n_rows})")
@@ -256,7 +222,7 @@ def train_depot_models(df_in, depot, target="Spot_Absent", augment_to=60, debug_
     y = df_depot[target].copy()
 
     # numeric-only
-    X = X.select_dtypes(include=[np.number]).dropna(axis=1, how="all")
+    X = X.select_dtypes(include=[np.number]).dropna(axis=1, how='all')
     if X.shape[1] == 0 or y.isna().all():
         safe_print(f"Skipping {depot} (no numeric features or missing target).")
         return None, None
@@ -271,13 +237,7 @@ def train_depot_models(df_in, depot, target="Spot_Absent", augment_to=60, debug_
         if len(X) < augment_to:
             n_synth = augment_to - len(X)
             safe_print(f"{depot}: generating {n_synth} synthetic rows (orig={len(X)})")
-            synth_X = generate_synthetic_data(
-                X,
-                n_samples=n_synth,
-                epochs=200,
-                batch_size=min(32, len(X)),
-                debug=debug_gan,
-            )
+            synth_X = generate_synthetic_data(X, n_samples=n_synth, epochs=200, batch_size=min(32, len(X)), debug=debug_gan)
             # simple target assignment: sample from historical target distribution
             synth_y = np.random.choice(y.values, size=n_synth, replace=True)
             X = pd.concat([X, synth_X], ignore_index=True)
@@ -317,7 +277,7 @@ def train_depot_models(df_in, depot, target="Spot_Absent", augment_to=60, debug_
         "mae": round(mae, 3),
         "r2": round(r2, 3),
         "n_rows": n_rows,
-        "features": list(X.columns),
+        "features": list(X.columns)
     }
 
     # Save model + feature list together to avoid future shape mismatch
@@ -346,9 +306,6 @@ def predict_depot_from_saved(depot, X_input_df):
 # Main loop
 # -------------------
 all_metrics = {}
-if "depot_name" not in df.columns:
-    raise KeyError("Column 'depot_name' is required in input_datasql.csv")
-
 depots = df["depot_name"].unique()
 safe_print(f"Starting training for {len(depots)} depots...")
 
