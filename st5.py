@@ -116,6 +116,7 @@ tab1, tab2, tab3 = st.tabs(["📊 Train Models", "🔮 Predict Absenteeism", "�
 
 # ------------------- Tab 1: Train / Retrain -------------------
 with tab1:
+    PASS
     st.subheader("Depot-wise Training (runs your tr5.py)")
     st.write("This will execute the training script (tr5.py). Make sure the path is correct and Python environment has required packages.")
     if st.button("Train / Retrain All Depots"):
@@ -291,6 +292,7 @@ with tab3:
                     st.download_button("Download Results CSV", csv, file_name=f"{selected_depot}_analysis.csv", mime="text/csv")
         except Exception as e:
             st.error(f"Analysis failed: {e}")
+
 
 
 
