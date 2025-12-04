@@ -2,7 +2,7 @@ streamlit
 pandas
 numpy
 joblib
-pickel
+
 sqlalchemy
 pymysql
 scikit-learn
