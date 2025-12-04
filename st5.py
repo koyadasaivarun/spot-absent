@@ -118,39 +118,39 @@ tab1, tab2, tab3 = st.tabs(["📊 Train Models", "🔮 Predict Absenteeism", "�
 with tab1:
     
     st.subheader("Depot-wise Training (runs your tr5.py)")
-    st.write("This will execute the training script (tr5.py). Make sure the path is correct and Python environment has required packages.")
+    #st.write("This will execute the training script (tr5.py). Make sure the path is correct and Python environment has required packages.")
     #if st.button("Train / Retrain All Depots"):
-        with st.spinner("Training depot-specific models — this may take several minutes..."):
-            try:
-                result = subprocess.run(["python", TRAIN_SCRIPT_PATH], capture_output=True, text=True)
-                if result.returncode == 0:
-                    st.success("Training finished successfully.")
-                    st.code(result.stdout[:10000])  # show first part
-                else:
-                    st.error("Training failed. See stderr below.")
-                    st.code(result.stderr[:10000])
-            except Exception as e:
-                st.error(f"Failed to run training script: {e}")
+        #with st.spinner("Training depot-specific models — this may take several minutes..."):
+            #try:
+                #result = subprocess.run(["python", TRAIN_SCRIPT_PATH], capture_output=True, text=True)
+                #if result.returncode == 0:
+                    #st.success("Training finished successfully.")
+                    #st.code(result.stdout[:10000])  # show first part
+                #else:
+                    #st.error("Training failed. See stderr below.")
+                    #st.code(result.stderr[:10000])
+            #except Exception as e:
+                #st.error(f"Failed to run training script: {e}")
 
-    metrics = load_metrics()
-    if metrics:
-        st.markdown("### Last training metrics (summary)")
-        for depot, m in metrics.items():
-            st.markdown(f"**{depot}**")
-            cols = st.columns(3)
-            keys = list(m.keys())
-            for i, key in enumerate(keys):
-                with cols[i % 3]:
-                    val = m[key]
-                    if isinstance(val, list):
-                        display_val = str(val)[:150]
-                    elif val is None:
-                        display_val = "N/A"
-                    else:
-                        display_val = val
-                    st.metric(label=key.upper(), value=display_val)
-    else:
-        st.info("No metrics found. Run training first (use the button above).")
+    #metrics = load_metrics()
+    #if metrics:
+        #st.markdown("### Last training metrics (summary)")
+        #for depot, m in metrics.items():
+            #st.markdown(f"**{depot}**")
+            #cols = st.columns(3)
+            #keys = list(m.keys())
+            #for i, key in enumerate(keys):
+                #with cols[i % 3]:
+                    #val = m[key]
+                    #if isinstance(val, list):
+                        #display_val = str(val)[:150]
+                    #elif val is None:
+                        #display_val = "N/A"
+                    #else:
+                        #display_val = val
+                    #st.metric(label=key.upper(), value=display_val)
+    #else:
+        #st.info("No metrics found. Run training first (use the button above).")
 
 # ------------------- Tab 2: Predict -------------------
 with tab2:
@@ -292,6 +292,7 @@ with tab3:
                     st.download_button("Download Results CSV", csv, file_name=f"{selected_depot}_analysis.csv", mime="text/csv")
         except Exception as e:
             st.error(f"Analysis failed: {e}")
+
 
 
 
